@@ -13,6 +13,7 @@ from onmt.modules.MultiHeadedAttn import MultiHeadedAttention
 from onmt.modules.StackedRNN import StackedLSTM, StackedGRU
 from onmt.modules.Embeddings import Embeddings, PositionalEncoding
 from onmt.modules.WeightNorm import WeightNormConv2d
+from onmt.modules.Tagger import Tagger
 
 from onmt.Models import EncoderBase, MeanEncoder, StdRNNDecoder, \
     RNNDecoderBase, InputFeedRNNDecoder, RNNEncoder, NMTModel
@@ -33,7 +34,8 @@ __all__ = [EncoderBase, MeanEncoder, RNNDecoderBase, InputFeedRNNDecoder,
            TransformerEncoder, TransformerDecoder, Embeddings, Elementwise,
            MatrixTree, WeightNormConv2d, ConvMultiStepAttention,
            CNNEncoder, CNNDecoder, StackedLSTM, StackedGRU,
-           context_gate_factory, CopyGeneratorLossCompute, AudioEncoder]
+           context_gate_factory, CopyGeneratorLossCompute, AudioEncoder,
+           Tagger]
 
 if can_use_sru:
     __all__.extend([SRU, check_sru_requirement])

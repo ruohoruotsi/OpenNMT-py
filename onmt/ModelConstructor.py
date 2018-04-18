@@ -13,7 +13,7 @@ from onmt.Models import NMTModel, MeanEncoder, RNNEncoder, \
                         StdRNNDecoder, InputFeedRNNDecoder
 from onmt.modules import Embeddings, ImageEncoder, CopyGenerator, \
                          TransformerEncoder, TransformerDecoder, \
-                         CNNEncoder, CNNDecoder, AudioEncoder
+                         CNNEncoder, CNNDecoder, AudioEncoder, Tagger
 from onmt.Utils import use_gpu
 from torch.nn.init import xavier_uniform
 
@@ -166,6 +166,9 @@ def make_base_model(model_opt, fields, gpu, checkpoint=None):
                                model_opt.sample_rate,
                                model_opt.window_size)
 
+
+    tagger = Tagger()
+
     # Make decoder.
     tgt_dict = fields["tgt"].vocab
     feature_dicts = onmt.io.collect_feature_vocabs(fields, 'tgt')
@@ -184,7 +187,7 @@ def make_base_model(model_opt, fields, gpu, checkpoint=None):
     decoder = make_decoder(model_opt, tgt_embeddings)
 
     # Make NMTModel(= encoder + decoder).
-    model = NMTModel(encoder, decoder)
+    model = NMTModel(encoder, decoder, tagger)
     model.model_type = model_opt.model_type
 
     # Make Generator.
