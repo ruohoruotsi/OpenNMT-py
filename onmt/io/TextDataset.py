@@ -36,6 +36,7 @@ class TextDataset(ONMTDatasetBase):
                 out examples?
     """
     def __init__(self, fields, src_examples_iter, tgt_examples_iter,
+                 tag_examples_iter,
                  num_src_feats=0, num_tgt_feats=0,
                  src_seq_length=0, tgt_seq_length=0,
                  dynamic_dict=True, use_filter_pred=True):
@@ -52,8 +53,8 @@ class TextDataset(ONMTDatasetBase):
         # at minimum the src tokens and their indices and potentially also
         # the src and tgt features and alignment information.
         if tgt_examples_iter is not None:
-            examples_iter = (self._join_dicts(src, tgt) for src, tgt in
-                             zip(src_examples_iter, tgt_examples_iter))
+            examples_iter = (self._join_dicts(src, tgt, tag) for src, tgt, tag in
+                             zip(src_examples_iter, tgt_examples_iter, tag_examples_iter))
         else:
             examples_iter = src_examples_iter
 
@@ -80,8 +81,7 @@ class TextDataset(ONMTDatasetBase):
             src_size += len(example.src)
             out_examples.append(example)
 
-        print("average src size", src_size / len(out_examples),
-              len(out_examples))
+        print("average src size: {:.1f}, total {}".format(src_size / len(out_examples),len(out_examples)))
 
         def filter_pred(example):
             return 0 < len(example.src) <= src_seq_length \
@@ -186,6 +186,28 @@ class TextDataset(ONMTDatasetBase):
                 yield example_dict, n_feats
 
     @staticmethod
+    def make_tag_iter(path):
+        example_tag_iter = TextDataset.read_tag_file(path)
+
+        examples_iter = (ex for ex in example_tag_iter)
+        return examples_iter
+
+
+    @staticmethod
+    def read_tag_file(path):
+        """
+        Reads a tag file line by line
+        """
+        with codecs.open(path, "r", "utf-8") as corpus_file:
+            for i, line in enumerate(corpus_file):
+                line = torch.FloatTensor([int(num) for num in line.strip().split()])
+
+                example_dict = {"tag": line}
+
+                yield example_dict
+
+
+    @staticmethod
     def get_fields(n_src_features, n_tgt_features):
         """
         Args:
@@ -243,6 +265,19 @@ class TextDataset(ONMTDatasetBase):
 
         fields["indices"] = torchtext.data.Field(
             use_vocab=False, tensor_type=torch.LongTensor,
+            sequential=False)
+
+        def make_tag(data, vocab, is_train):
+            src_size = max([t.size(0) for t in data])
+            alignment = torch.zeros(src_size, len(data))
+            for i, sent in enumerate(data):
+                alignment[:sent.size(0), i] = sent
+            return alignment
+
+        fields["tag"] = torchtext.data.Field(
+            postprocessing=make_tag,
+            use_vocab=False,
+            tensor_type=torch.FloatTensor,
             sequential=False)
 
         return fields

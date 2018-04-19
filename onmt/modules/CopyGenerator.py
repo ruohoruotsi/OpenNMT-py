@@ -3,6 +3,8 @@ import torch.nn.functional as F
 import torch
 import torch.cuda
 
+from torch.nn.modules.loss import BCELoss, MSELoss
+
 import onmt
 import onmt.io
 from onmt.Utils import aeq
@@ -64,7 +66,7 @@ class CopyGenerator(nn.Module):
         self.linear_copy = nn.Linear(input_size, 1)
         self.tgt_dict = tgt_dict
 
-    def forward(self, hidden, attn, src_map):
+    def forward(self, hidden, attn, src_map, tags=None):
         """
         Compute a distribution over the target dictionary
         extended by the dynamic dictionary implied by compying
@@ -94,6 +96,10 @@ class CopyGenerator(nn.Module):
         p_copy = F.sigmoid(self.linear_copy(hidden))
         # Probibility of not copying: p_{word}(w) * (1 - p(z))
         out_prob = torch.mul(prob,  1 - p_copy.expand_as(prob))
+
+        if tags is not None:
+            attn = attn*tags
+
         mul_attn = torch.mul(attn, p_copy.expand_as(attn))
         copy_prob = torch.bmm(mul_attn.view(-1, batch, slen)
                               .transpose(0, 1),
@@ -155,8 +161,9 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
         self.normalize_by_length = normalize_by_length
         self.criterion = CopyGeneratorCriterion(len(tgt_vocab), force_copy,
                                                 self.padding_idx)
+        self.tagging_criterion = BCELoss()
 
-    def _make_shard_state(self, batch, output, range_, attns):
+    def _make_shard_state(self, batch, output, tags, range_, attns, tag_labels):
         """ See base class for args description. """
         if getattr(batch, "alignment", None) is None:
             raise AssertionError("using -copy_attn you need to pass in "
@@ -166,10 +173,12 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
             "output": output,
             "target": batch.tgt[range_[0] + 1: range_[1]],
             "copy_attn": attns.get("copy"),
-            "align": batch.alignment[range_[0] + 1: range_[1]]
+            "align": batch.alignment[range_[0] + 1: range_[1]],
+            "tags": tags,
+            "tag_labels": tag_labels
         }
 
-    def _compute_loss(self, batch, output, target, copy_attn, align):
+    def _compute_loss(self, batch, output, target, copy_attn, align, tags, tag_labels):
         """
         Compute the loss. The args must match self._make_shard_state().
         Args:
@@ -181,9 +190,18 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
         """
         target = target.view(-1)
         align = align.view(-1)
+
+        # Ugly :(
+        ftags = tags.view(-1, copy_attn.shape[-1])\
+                   .unsqueeze(0)\
+                   .expand_as(copy_attn)\
+                   .contiguous()
+
+        tags = tags.squeeze(2)
         scores = self.generator(self._bottle(output),
                                 self._bottle(copy_attn),
-                                batch.src_map)
+                                batch.src_map,
+                                self._bottle(ftags))
         loss = self.criterion(scores, align, target)
         scores_data = scores.data.clone()
         scores_data = onmt.io.TextDataset.collapse_copy_scores(
@@ -203,6 +221,22 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
         loss_data = loss.sum().data.clone()
         stats = self._stats(loss_data, scores_data, target_data)
 
+        # Compute Tag Loss Term
+        print("--")
+        # print(tag_labels)
+        # print(tag_labels[:50])
+        # print(tag_labels[:50, 0])
+        # for s,t in zip(tag_labels[:50, 0],tags[:50, 0]):
+        #     print(s.data[0],t.data[0])
+
+        max_val = (-tags).clamp(min=0)
+        tagging_loss = tags - tags * tag_labels + max_val \
+                       + ((-max_val).exp() \
+                       + (-tags - max_val).exp()).log()
+        tagging_loss = tagging_loss.sum()
+        # tagging_loss = self.tagging_criterion(tags,
+        #                                       tag_labels)
+
         if self.normalize_by_length:
             # Compute Loss as NLL divided by seq length
             # Compute Sequence Lengths
@@ -215,4 +249,5 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
         else:
             loss = loss.sum()
 
+        # loss = tagging_loss
         return loss, stats

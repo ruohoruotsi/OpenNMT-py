@@ -136,6 +136,11 @@ def preprocess_opts(parser):
     group.add_argument('-valid_tgt', required=True,
                        help="Path to the validation target data")
 
+    group.add_argument('-train_tags', required=True,
+                       help="Path to tags of train set.")
+    group.add_argument('-valid_tags', required=True,
+                       help="Path to tags of val set.")
+
     group.add_argument('-src_dir', default="",
                        help="Source directory for image or audio files.")
 

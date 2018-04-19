@@ -167,7 +167,9 @@ def make_base_model(model_opt, fields, gpu, checkpoint=None):
                                model_opt.window_size)
 
 
-    tagger = Tagger()
+    tagger = Tagger(model_opt.rnn_type,
+                    model_opt.rnn_size,
+                    model_opt.dropout)
 
     # Make decoder.
     tgt_dict = fields["tgt"].vocab

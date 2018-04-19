@@ -117,22 +117,25 @@ def build_save_dataset(corpus_type, fields, opt):
     if corpus_type == 'train':
         src_corpus = opt.train_src
         tgt_corpus = opt.train_tgt
+        tag_corpus = opt.train_tags
     else:
         src_corpus = opt.valid_src
         tgt_corpus = opt.valid_tgt
+        tag_corpus = opt.valid_tags
 
     # Currently we only do preprocess sharding for corpus: data_type=='text'.
-    if opt.data_type == 'text':
-        return build_save_text_dataset_in_shards(
-                src_corpus, tgt_corpus, fields,
-                corpus_type, opt)
+    # if opt.data_type == 'text':
+    #     return build_save_text_dataset_in_shards(
+    #             src_corpus, tgt_corpus, fields,
+    #             corpus_type, opt)
 
     # For data_type == 'img' or 'audio', currently we don't do
     # preprocess sharding. We only build a monolithic dataset.
     # But since the interfaces are uniform, it would be not hard
     # to do this should users need this feature.
     dataset = onmt.io.build_dataset(
-                fields, opt.data_type, src_corpus, tgt_corpus,
+                fields, opt.data_type, src_corpus,
+                tgt_corpus, tag_corpus,
                 src_dir=opt.src_dir,
                 src_seq_length=opt.src_seq_length,
                 tgt_seq_length=opt.tgt_seq_length,

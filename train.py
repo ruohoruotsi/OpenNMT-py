@@ -414,7 +414,6 @@ def main():
 
     # Load fields generated from preprocess phase.
     fields = load_fields(first_dataset, data_type, checkpoint)
-
     # Report src/tgt features.
     collect_report_features(fields)
 
