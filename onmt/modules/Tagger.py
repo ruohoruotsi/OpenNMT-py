@@ -22,28 +22,28 @@ class Tagger(nn.Module):
     def __init__(self, rnn_type, hidden_size,
                  dropout=0.0):
         super(Tagger, self).__init__()
-        self.rnn, self.no_pack_padded_seq  = \
-            rnn_factory(rnn_type,
-                        input_size=hidden_size,
-                        hidden_size=hidden_size//2,
-                        num_layers=1,
-                        dropout=dropout,
-                        bidirectional=True)
+        # self.rnn, self.no_pack_padded_seq  = \
+        #     rnn_factory(rnn_type,
+        #                 input_size=hidden_size,
+        #                 hidden_size=hidden_size//2,
+        #                 num_layers=1,
+        #                 dropout=dropout,
+        #                 bidirectional=True)
+        # self.linear1 = nn.Linear(hidden_size, 50)
         self.linear = nn.Linear(hidden_size, 1)
 
     def forward(self, memory_bank):
         src_len, bsize, rnn_size = memory_bank.size()
 
-        # memory_bank.detach_()
         # final_layer, _ = self.rnn(memory_bank, None)
-        # t_copy = F.sigmoid(self.linear(final_layer
-        # print(memory_bank)
-        # print("WEIGHT", self.linear.weight)
-        # t_copy = self.linear(memory_bank.view(-1, rnn_size)).view(src_len, bsize, -1)
-
+        # t_copy = F.sigmoid(self.linear(memory_bank))
         t_copy = self.linear(memory_bank)
-        t_copy = F.sigmoid(t_copy)
+        # print("WEIGHT", self.linear.weight)
+        # memory_bank.detach_()
+
+        # t_copy = self.linear(memory_bank)
+        # t_copy = F.sigmoid(t_copy)
         # print(t_copy[:, 0][:10])
-        # exit()
-        # print(t_copy.shape)
-        return t_copy#t_copy
+        # final_layer = F.tanh(self.linear1(memory_bank))
+        # t_copy = F.sigmoid(self.linear(final_layer))
+        return t_copy

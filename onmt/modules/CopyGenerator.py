@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import torch
 import torch.cuda
 
-from torch.nn.modules.loss import BCELoss, MSELoss
+from torch.nn.modules.loss import BCELoss, BCEWithLogitsLoss
 
 import onmt
 import onmt.io
@@ -97,8 +97,10 @@ class CopyGenerator(nn.Module):
         # Probibility of not copying: p_{word}(w) * (1 - p(z))
         out_prob = torch.mul(prob,  1 - p_copy.expand_as(prob))
 
-        if tags is not None:
-            attn = attn*tags
+        # if tags is not None:
+        #     mask = tags.gt(0.15).float()
+        #     mask.detach_()
+        #     attn = attn*mask
 
         mul_attn = torch.mul(attn, p_copy.expand_as(attn))
         copy_prob = torch.bmm(mul_attn.view(-1, batch, slen)
@@ -143,6 +145,26 @@ class CopyGeneratorCriterion(object):
         loss = -out.log().mul(target.ne(self.pad).float())
         return loss
 
+class StableBCELoss(nn.modules.Module):
+       def __init__(self):
+            super(StableBCELoss, self).__init__()
+       def forward(self, input, target):
+            # neg_abs = - input.abs()
+            # loss = input.clamp(min=0) - input * target + (1 + neg_abs.exp()).log()
+            max_val = (-input).clamp(min=0)
+            print("max", max_val)
+            print("input", input)
+            print("input x target", input*target)
+            print("first exp term", ((-max_val).exp()))
+            print("second exp term", (-input - max_val).exp())
+            print("together", (-max_val).exp() + (-input - max_val).exp())
+            loss = input - input * target \
+                   + max_val + ((-max_val).exp() \
+                                 + (-input - max_val).exp()).log()
+            # loss = -(y * yhat.log() + (1-y) * (1-yhat).log())
+            print("loss", loss)
+            return loss#.mean()
+
 
 class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
     """
@@ -161,7 +183,7 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
         self.normalize_by_length = normalize_by_length
         self.criterion = CopyGeneratorCriterion(len(tgt_vocab), force_copy,
                                                 self.padding_idx)
-        self.tagging_criterion = BCELoss()
+        self.tagging_criterion = BCEWithLogitsLoss()
 
     def _make_shard_state(self, batch, output, tags, range_, attns, tag_labels):
         """ See base class for args description. """
@@ -223,19 +245,19 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
 
         # Compute Tag Loss Term
         print("--")
-        # print(tag_labels)
-        # print(tag_labels[:50])
-        # print(tag_labels[:50, 0])
-        # for s,t in zip(tag_labels[:50, 0],tags[:50, 0]):
-        #     print(s.data[0],t.data[0])
 
-        max_val = (-tags).clamp(min=0)
-        tagging_loss = tags - tags * tag_labels + max_val \
-                       + ((-max_val).exp() \
-                       + (-tags - max_val).exp()).log()
-        tagging_loss = tagging_loss.sum()
-        # tagging_loss = self.tagging_criterion(tags,
-        #                                       tag_labels)
+        # Numerically stable BCE criterion
+        # max_val = (-tags).clamp(min=0)
+        # tagging_loss = tags - tags * tag_labels + max_val \
+        #                + ((-max_val).exp() \
+        #                + (-tags - max_val).exp()).log()
+        tagging_loss = self.tagging_criterion(tags[:10],
+                                              tag_labels[:10])
+
+        # for s,t,l in zip(tag_labels[:50, 0],tags[:50, 0], tagging_loss[:50, 0]):
+        #     print("{} {:.2f} loss: {:.2f}".format(s.data[0],t.data[0], l.data[0]))
+        for s,t in zip(tag_labels[:10, 0],F.sigmoid(tags[:10, 0])):
+            print("{} {:.2f}".format(s.data[0],t.data[0]))
 
         if self.normalize_by_length:
             # Compute Loss as NLL divided by seq length
@@ -248,6 +270,8 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
             loss = torch.div(loss, tgt_lens).sum()
         else:
             loss = loss.sum()
-
-        # loss = tagging_loss
+        tagging_loss = tagging_loss
+        print("Tagging Loss {:.3f} Loss: {:.3f}".format(tagging_loss.data[0], loss.data[0]))
+        # loss += tagging_loss
+        loss = tagging_loss
         return loss, stats
