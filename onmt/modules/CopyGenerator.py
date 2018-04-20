@@ -180,7 +180,7 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
             "tag_labels": tag_labels
         }
 
-    def _compute_loss(self, batch, output, target, copy_attn, align, tags, tag_labels):
+    def _compute_loss(self, batch, output, target, copy_attn, align, tag_labels, tags = None):
         """
         Compute the loss. The args must match self._make_shard_state().
         Args:
@@ -193,18 +193,22 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
         target = target.view(-1)
         align = align.view(-1)
 
-        # Need to make it same size as copy_attn
-        ftags = tags[:,:,1].contiguous()\
-                           .view(-1, copy_attn.shape[-1])\
-                           .unsqueeze(0)\
-                           .expand_as(copy_attn)\
-                           .contiguous()
+        if tags is not None:
+            # Need to make it same size as copy_attn
+            ftags = tags[:,:,1].contiguous()\
+                               .view(-1, copy_attn.shape[-1])\
+                               .unsqueeze(0)\
+                               .expand_as(copy_attn)\
+                               .contiguous()
+            ftags = self._bottle(ftags)
+        else:
+            ftags = None
 
         # tags = tags.squeeze(2)
         scores = self.generator(self._bottle(output),
                                 self._bottle(copy_attn),
                                 batch.src_map,
-                                self._bottle(ftags))
+                                ftags)
         loss = self.criterion(scores, align, target)
         scores_data = scores.data.clone()
         scores_data = onmt.io.TextDataset.collapse_copy_scores(
@@ -224,18 +228,6 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
         loss_data = loss.sum().data.clone()
         stats = self._stats(loss_data, scores_data, target_data)
 
-        # Compute Tag Loss Term
-        # tagging_loss = self.tagging_criterion(tags[:10],
-        #                                       tag_labels[:10])
-
-        tags = tags.view(-1, 2)
-        tag_labels = tag_labels.view(-1).long()
-        tagging_loss = F.nll_loss(tags, tag_labels)
-
-        # for s,t,l in zip(tag_labels[:50, 0],tags[:50, 0], tagging_loss[:50, 0]):
-        #     print("{} {:.2f} loss: {:.2f}".format(s.data[0],t.data[0], l.data[0]))
-        for s,t in zip(tag_labels[:10], tags[:10]):
-            print("{} {:.2f}".format(s.data[0],t.exp().data[1]))
 
         if self.normalize_by_length:
             # Compute Loss as NLL divided by seq length
@@ -248,6 +240,18 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
             loss = torch.div(loss, tgt_lens).sum()
         else:
             loss = loss.sum()
-        print("Tagging Loss {:.3f} Loss: {:.3f}".format(tagging_loss.data[0], loss.data[0]))
-        loss = 5000*tagging_loss + loss
+
+        # Compute Tag Loss Term
+        # tagging_loss = self.tagging_criterion(tags[:10],
+        #                                       tag_labels[:10])
+        if tags is not None:
+            tags = tags.view(-1, 2)
+            tag_labels = tag_labels.view(-1).long()
+            tagging_loss = F.nll_loss(tags, tag_labels)
+            print("Tagging Loss {:.3f} Loss: {:.3f}".format(tagging_loss.data[0], loss.data[0]))
+            # for s,t,l in zip(tag_labels[:50, 0],tags[:50, 0], tagging_loss[:50, 0]):
+            #     print("{} {:.2f} loss: {:.2f}".format(s.data[0],t.data[0], l.data[0]))
+            for s,t in zip(tag_labels[:10], tags[:10]):
+                print("{} {:.2f}".format(s.data[0],t.exp().data[1]))
+            loss = 5000*tagging_loss + loss
         return loss, stats

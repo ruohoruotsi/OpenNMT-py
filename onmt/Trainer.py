@@ -175,7 +175,8 @@ class Trainer(object):
             if accum == self.grad_accum_count:
                 self._gradient_accumulation(
                         true_batchs, total_stats,
-                        report_stats, normalization)
+                        report_stats, normalization,
+                        epoch)
 
                 if report_func is not None:
                     report_stats = report_func(
@@ -273,7 +274,8 @@ class Trainer(object):
                       valid_stats.ppl(), epoch))
 
     def _gradient_accumulation(self, true_batchs, total_stats,
-                               report_stats, normalization):
+                               report_stats, normalization,
+                               epoch):
         if self.grad_accum_count > 1:
             self.model.zero_grad()
 
@@ -304,6 +306,10 @@ class Trainer(object):
                     self.model.zero_grad()
                 outputs, attns, dec_state, tags = \
                     self.model(src, tgt, src_lengths, dec_state)
+
+                # Let model train before activating tag loss
+                if epoch < 2:
+                    tags = None
 
                 # 3. Compute loss in shards for memory efficiency.
                 batch_stats = self.train_loss.sharded_compute_loss(

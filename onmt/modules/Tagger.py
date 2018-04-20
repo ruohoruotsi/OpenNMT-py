@@ -10,7 +10,7 @@ class Tagger(nn.Module):
     def __init__(self, rnn_type, hidden_size,
                  dropout=0.0):
         super(Tagger, self).__init__()
-        self.linear = nn.Linear(hidden_size, 2)
+        self.linear = nn.Linear(hidden_size, 2, bias=True)
 
     def forward(self, memory_bank):
         src_len, bsize, rnn_size = memory_bank.size()
