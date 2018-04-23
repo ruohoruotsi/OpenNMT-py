@@ -183,7 +183,6 @@ class Embeddings(nn.Module):
         aeq(nfeat, len(self.emb_luts))
 
         emb = self.make_embedding(input)
-
         out_length, out_batch, emb_size = emb.size()
         aeq(in_length, out_length)
         aeq(in_batch, out_batch)

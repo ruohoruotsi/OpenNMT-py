@@ -23,7 +23,6 @@ class Tagger(nn.Module):
         t_copy = F.log_softmax(t_copy, dim=-1)
         # print("WEIGHT", self.linear.weight)
         # memory_bank.detach_()
-
         # t_copy = self.linear(memory_bank)
         # t_copy = F.sigmoid(t_copy)
         # print(t_copy[:, 0][:10])

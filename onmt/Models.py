@@ -138,7 +138,6 @@ class RNNEncoder(EncoderBase):
 
         emb = self.embeddings(src)
         s_len, batch, emb_dim = emb.size()
-
         packed_emb = emb
         if lengths is not None and not self.no_pack_padded_seq:
             # Lengths data is wrapped inside a Variable.
@@ -307,9 +306,8 @@ class RNNDecoderBase(nn.Module):
         _, memory_batch, _ = memory_bank.size()
         aeq(tgt_batch, memory_batch)
         # END
-
         # Run the forward pass of the RNN.
-        decoder_final, decoder_outputs, attns = self._run_forward_pass(
+        decoder_final, decoder_outputs, attns, align = self._run_forward_pass(
             tgt, memory_bank, state, memory_lengths=memory_lengths)
 
         # Update the state with the result.
@@ -324,7 +322,9 @@ class RNNDecoderBase(nn.Module):
         for k in attns:
             attns[k] = torch.stack(attns[k])
 
-        return decoder_outputs, state, attns
+        align = torch.stack(align)
+
+        return decoder_outputs, state, attns, align
 
     def init_decoder_state(self, src, memory_bank, encoder_final):
         def _fix_enc_hidden(h):
@@ -384,7 +384,6 @@ class StdRNNDecoder(RNNDecoderBase):
         # Initialize local and return variables.
         attns = {}
         emb = self.embeddings(tgt)
-
         # Run the forward pass of the RNN.
         if isinstance(self.rnn, nn.GRU):
             rnn_output, decoder_final = self.rnn(emb, state.hidden[0])
@@ -399,7 +398,7 @@ class StdRNNDecoder(RNNDecoderBase):
         # END
 
         # Calculate the attention.
-        decoder_outputs, p_attn = self.attn(
+        decoder_outputs, p_attn, align = self.attn(
             rnn_output.transpose(0, 1).contiguous(),
             memory_bank.transpose(0, 1),
             memory_lengths=memory_lengths
@@ -478,6 +477,8 @@ class InputFeedRNNDecoder(RNNDecoderBase):
             attns["copy"] = []
         if self._coverage:
             attns["coverage"] = []
+        # Alignment for copy masking
+        copy_align = []
 
         emb = self.embeddings(tgt)
         assert emb.dim() == 3  # len x batch x embedding_dim
@@ -493,7 +494,7 @@ class InputFeedRNNDecoder(RNNDecoderBase):
             decoder_input = torch.cat([emb_t, input_feed], 1)
 
             rnn_output, hidden = self.rnn(decoder_input, hidden)
-            decoder_output, p_attn = self.attn(
+            decoder_output, p_attn, align = self.attn(
                 rnn_output,
                 memory_bank.transpose(0, 1),
                 memory_lengths=memory_lengths)
@@ -508,6 +509,7 @@ class InputFeedRNNDecoder(RNNDecoderBase):
 
             decoder_outputs += [decoder_output]
             attns["std"] += [p_attn]
+            copy_align += [align]
 
             # Update the coverage attention.
             if self._coverage:
@@ -517,13 +519,13 @@ class InputFeedRNNDecoder(RNNDecoderBase):
 
             # Run the forward pass of the copy attention layer.
             if self._copy and not self._reuse_copy_attn:
-                _, copy_attn = self.copy_attn(decoder_output,
+                _, copy_attn, __ = self.copy_attn(decoder_output,
                                               memory_bank.transpose(0, 1))
                 attns["copy"] += [copy_attn]
             elif self._copy:
                 attns["copy"] = attns["std"]
         # Return result.
-        return hidden, decoder_outputs, attns
+        return hidden, decoder_outputs, attns, copy_align
 
     def _build_rnn(self, rnn_type, input_size,
                    hidden_size, num_layers, dropout):
@@ -591,7 +593,7 @@ class NMTModel(nn.Module):
 
         enc_state = \
             self.decoder.init_decoder_state(src, memory_bank, enc_final)
-        decoder_outputs, dec_state, attns = \
+        decoder_outputs, dec_state, attns, align = \
             self.decoder(tgt, memory_bank,
                          enc_state if dec_state is None
                          else dec_state,
@@ -600,7 +602,7 @@ class NMTModel(nn.Module):
             # Not yet supported on multi-gpu
             dec_state = None
             attns = None
-        return decoder_outputs, attns, dec_state, tags
+        return decoder_outputs, attns, dec_state, tags, align
 
 
 class DecoderState(object):
