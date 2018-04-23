@@ -186,13 +186,15 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
         """
 
         # Make a mask that is the same across decoding steps
+
+        src_len = copy_attn.shape[2]
+        tag_labels = tag_labels[:src_len]
         ftags = tag_labels.view(-1, copy_attn.shape[-1])\
                                .unsqueeze(0)\
                                .expand_as(copy_attn)\
                                .contiguous()
         # Log both non-logged
-        src_len = copy_attn.shape[0]
-        log_mask = torch.log(ftags[:src_len])
+        log_mask = torch.log(ftags)
         log_copy = torch.log(copy_attn)
         # Add the mask (- inf for 0, 0 for 1)
         log_masked = log_mask + log_copy
