@@ -308,8 +308,8 @@ class Trainer(object):
                     self.model(src, tgt, src_lengths, dec_state)
 
                 # Let model train before activating tag loss
-                if epoch < 2:
-                    tags = None
+                # if epoch < 2:
+                #     tags = None
 
                 # 3. Compute loss in shards for memory efficiency.
                 batch_stats = self.train_loss.sharded_compute_loss(

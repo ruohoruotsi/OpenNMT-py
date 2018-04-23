@@ -66,7 +66,7 @@ class CopyGenerator(nn.Module):
         self.linear_copy = nn.Linear(input_size, 1)
         self.tgt_dict = tgt_dict
 
-    def forward(self, hidden, attn, src_map, tags=None):
+    def forward(self, hidden, attn, src_map):
         """
         Compute a distribution over the target dictionary
         extended by the dynamic dictionary implied by compying
@@ -96,12 +96,6 @@ class CopyGenerator(nn.Module):
         p_copy = F.sigmoid(self.linear_copy(hidden))
         # Probibility of not copying: p_{word}(w) * (1 - p(z))
         out_prob = torch.mul(prob,  1 - p_copy.expand_as(prob))
-
-        if tags is not None:
-            mask = tags.gt(0.15).float()
-            mask.detach_()
-            attn = attn * mask
-            # pass
 
         mul_attn = torch.mul(attn, p_copy.expand_as(attn))
         copy_prob = torch.bmm(mul_attn.view(-1, batch, slen)
@@ -190,25 +184,34 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
             copy_attn: the copy attention value.
             align: the align info.
         """
-        target = target.view(-1)
-        align = align.view(-1)
 
-        if tags is not None:
-            # Need to make it same size as copy_attn
-            ftags = tags[:,:,1].contiguous()\
-                               .view(-1, copy_attn.shape[-1])\
+        # Make a mask that is the same across decoding steps
+        ftags = tag_labels.view(-1, copy_attn.shape[-1])\
                                .unsqueeze(0)\
                                .expand_as(copy_attn)\
                                .contiguous()
-            ftags = self._bottle(ftags)
-        else:
-            ftags = None
+        # Log both non-logged
+        src_len = copy_attn.shape[0]
+        log_mask = torch.log(ftags[:src_len])
+        log_copy = torch.log(copy_attn)
+        # Add the mask (- inf for 0, 0 for 1)
+        log_masked = log_mask + log_copy
+        # Compute a new softmax with the mask
+        new_copy = F.softmax(log_masked, dim=-1)
+
+        target = target.view(-1)
+        align = align.view(-1)
+
+        # ftags = tags[:,:,1].contiguous()\
+        #                    .view(-1, copy_attn.shape[-1])\
+        #                    .unsqueeze(0)\
+        #                    .expand_as(copy_attn)\
+        #                    .contiguous()
 
         # tags = tags.squeeze(2)
         scores = self.generator(self._bottle(output),
-                                self._bottle(copy_attn),
-                                batch.src_map,
-                                ftags)
+                                self._bottle(new_copy),
+                                batch.src_map)
         loss = self.criterion(scores, align, target)
         scores_data = scores.data.clone()
         scores_data = onmt.io.TextDataset.collapse_copy_scores(
@@ -253,5 +256,5 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
             #     print("{} {:.2f} loss: {:.2f}".format(s.data[0],t.data[0], l.data[0]))
             for s,t in zip(tag_labels[:10], tags[:10]):
                 print("{} {:.2f}".format(s.data[0],t.exp().data[1]))
-            loss = 5000*tagging_loss + loss
+            loss = tagging_loss * batch.batch_size + loss
         return loss, stats
