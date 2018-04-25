@@ -206,6 +206,7 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
         # Copy alignment is tgt x batch x src
         src_len = copy_attn.shape[2]
         tag_labels = tag_labels[:src_len]
+
         # ftags = tag_labels.view(-1, copy_attn.shape[-1])\
         #                        .unsqueeze(0)\
         #                        .expand_as(copy_attn)\
@@ -219,18 +220,14 @@ class CopyGeneratorLossCompute(onmt.Loss.LossComputeBase):
                            .contiguous()
         log_mask = ftags
 
-        #print("ftags", ftags.shape)
-        # ftags.detach_()
         # Log both non-logged
-        log_copy = copy_align# torch.log(copy_attn)
+        log_copy = copy_align
         # Add the mask (- inf for 0, 0 for 1)
         log_masked = log_mask + log_copy
         # Compute a new softmax with the mask
         new_copy = F.softmax(log_masked, dim=-1)
         target = target.view(-1)
         align = align.view(-1)
-
-
 
         # tags = tags.squeeze(2)
         scores = self.generator(self._bottle(output),
