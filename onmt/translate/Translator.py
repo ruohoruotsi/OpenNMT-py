@@ -82,7 +82,7 @@ class Translator(object):
         # exclusion_list = ["<t>", "</t>", "."]
         exclusion_tokens = set([vocab.stoi[t]
                                 for t in self.ignore_when_blocking])
-
+        dot = vocab.stoi["."]
         beam = [onmt.translate.Beam(beam_size, n_best=self.n_best,
                                     cuda=self.cuda,
                                     global_scorer=self.global_scorer,
@@ -92,7 +92,8 @@ class Translator(object):
                                     min_length=self.min_length,
                                     stepwise_penalty=self.stepwise_penalty,
                                     block_ngram_repeat=self.block_ngram_repeat,
-                                    exclusion_tokens=exclusion_tokens)
+                                    exclusion_tokens=exclusion_tokens,
+                                    dot=dot)
                 for __ in range(batch_size)]
 
         # Help functions for working with beams and batches
@@ -167,17 +168,10 @@ class Translator(object):
                 # beam x tgt_vocab
                 beam_attn = unbottle(attn["std"])
             else:
-                #print(log_mask.shape, align.shape, attn["copy"].squeeze(0).shape)
-
-                new_copy = log_mask + align
-                new_copy = F.softmax(new_copy, dim=-1)
-                #print(new_copy.shape, attn["copy"].squeeze(0).shape)
+                new_copy = F.softmax(log_mask + align, dim=-1)
                 out = self.model.generator.forward(dec_out,
-                                                   new_copy,
+                                                   new_copy,#attn["copy"].squeeze(0)
                                                    src_map)
-                #out = self.model.generator.forward(dec_out,
-                #                                   attn["copy"].squeeze(0),
-                #                                   src_map)
                 # beam x (tgt_vocab + extra_vocab)
                 out = data.collapse_copy_scores(
                     unbottle(out.data),

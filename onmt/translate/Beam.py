@@ -22,7 +22,8 @@ class Beam(object):
                  min_length=0,
                  stepwise_penalty=False,
                  block_ngram_repeat=0,
-                 exclusion_tokens=set()):
+                 exclusion_tokens=set(),
+                 dot=0):
 
         self.size = size
         self.tt = torch.cuda if cuda else torch
@@ -41,6 +42,7 @@ class Beam(object):
 
         # Has EOS topped the beam yet.
         self._eos = eos
+        self._dot = dot
         self.eos_top = False
 
         # The attentions (matrix) for each time.
