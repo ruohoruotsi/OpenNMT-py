@@ -149,7 +149,7 @@ class Translator(object):
             inp = inp.unsqueeze(2)
 
             # Run one step.
-            dec_out, dec_states, attn = self.model.decoder(
+            dec_out, dec_states, attn, tags = self.model.decoder(
                 inp, memory_bank, dec_states, memory_lengths=memory_lengths)
             dec_out = dec_out.squeeze(0)
             # dec_out: beam x rnn_size
