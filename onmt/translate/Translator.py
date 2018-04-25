@@ -1,6 +1,6 @@
 import torch
 from torch.autograd import Variable
-
+import torch.nn.functional as F
 import onmt.translate.Beam
 import onmt.io
 
@@ -113,6 +113,12 @@ class Translator(object):
             _, src_lengths = batch.src
 
         enc_states, memory_bank = self.model.encoder(src, src_lengths)
+        # Compute the mask over the attention
+        tags = self.model.tagger(memory_bank)
+        log_mask = tags[:,:,1].contiguous()
+        log_mask = log_mask.repeat(1, beam_size)
+        log_mask = log_mask.view(batch_size*beam_size, -1)
+
         dec_states = self.model.decoder.init_decoder_state(
                                         src, memory_bank, enc_states)
 
@@ -149,11 +155,11 @@ class Translator(object):
             inp = inp.unsqueeze(2)
 
             # Run one step.
-            dec_out, dec_states, attn, tags = self.model.decoder(
+            dec_out, dec_states, attn, align = self.model.decoder(
                 inp, memory_bank, dec_states, memory_lengths=memory_lengths)
             dec_out = dec_out.squeeze(0)
+            align = align.squeeze(0)
             # dec_out: beam x rnn_size
-
             # (b) Compute a vector of batch x beam word scores.
             if not self.copy_attn:
                 out = self.model.generator.forward(dec_out).data
@@ -161,9 +167,17 @@ class Translator(object):
                 # beam x tgt_vocab
                 beam_attn = unbottle(attn["std"])
             else:
+                #print(log_mask.shape, align.shape, attn["copy"].squeeze(0).shape)
+
+                new_copy = log_mask + align
+                new_copy = F.softmax(new_copy, dim=-1)
+                #print(new_copy.shape, attn["copy"].squeeze(0).shape)
                 out = self.model.generator.forward(dec_out,
-                                                   attn["copy"].squeeze(0),
+                                                   new_copy,
                                                    src_map)
+                #out = self.model.generator.forward(dec_out,
+                #                                   attn["copy"].squeeze(0),
+                #                                   src_map)
                 # beam x (tgt_vocab + extra_vocab)
                 out = data.collapse_copy_scores(
                     unbottle(out.data),
