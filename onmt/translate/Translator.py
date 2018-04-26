@@ -82,7 +82,7 @@ class Translator(object):
         # exclusion_list = ["<t>", "</t>", "."]
         exclusion_tokens = set([vocab.stoi[t]
                                 for t in self.ignore_when_blocking])
-        dot = vocab.stoi["."]
+        dot = vocab.stoi["</t>"]
         beam = [onmt.translate.Beam(beam_size, n_best=self.n_best,
                                     cuda=self.cuda,
                                     global_scorer=self.global_scorer,
@@ -168,7 +168,12 @@ class Translator(object):
                 # beam x tgt_vocab
                 beam_attn = unbottle(attn["std"])
             else:
-                new_copy = F.softmax(log_mask + align, dim=-1)
+                # new_copy = F.softmax(log_mask + align, dim=-1)
+                # Make it a mask
+                mask = log_mask.exp().gt(0.15).float()
+                new_copy = attn["copy"].squeeze(0) * mask
+                
+                
                 out = self.model.generator.forward(dec_out,
                                                    new_copy,#attn["copy"].squeeze(0)
                                                    src_map)
