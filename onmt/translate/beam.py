@@ -23,7 +23,8 @@ class Beam(object):
                  min_length=0,
                  stepwise_penalty=False,
                  block_ngram_repeat=0,
-                 exclusion_tokens=set()):
+                 exclusion_tokens=set(),
+                 dot=0):
 
         self.size = size
         self.tt = torch.cuda if cuda else torch
@@ -42,6 +43,7 @@ class Beam(object):
 
         # Has EOS topped the beam yet.
         self._eos = eos
+        self._dot = dot
         self.eos_top = False
 
         # The attentions (matrix) for each time.
@@ -121,6 +123,15 @@ class Beam(object):
                         ngrams.add(tuple(gram))
                     if fail:
                         beam_scores[j] = -10e20
+
+            #sentence blocker
+            le = len(self.next_ys)
+            for j in range(self.next_ys[-1].size(0)):
+                if self.next_ys[-1][j] == self._dot:
+                    hyp, _ = self.get_hyp(le-1, j)
+                    num_sents = sum([1 for t in hyp if t==self._dot]) 
+                    if num_sents < 3:
+                        word_probs[j][self._eos] = -1e20 
         else:
             beam_scores = word_probs[0]
         flat_beam_scores = beam_scores.view(-1)
@@ -140,9 +151,12 @@ class Beam(object):
 
         for i in range(self.next_ys[-1].size(0)):
             if self.next_ys[-1][i] == self._eos:
-                global_scores = self.global_scorer.score(self, self.scores)
-                s = global_scores[i]
-                self.finished.append((s, len(self.next_ys) - 1, i))
+                hyp, _ = self.get_hyp(len(self.next_ys)-1, i)
+                num_sents = sum([1 for t in hyp if t==self._dot])
+                if num_sents > 2:
+                    global_scores = self.global_scorer.score(self, self.scores)
+                    s = global_scores[i]
+                    self.finished.append((s, len(self.next_ys) - 1, i))
 
         # End condition is when top-of-beam is EOS and no global score.
         if self.next_ys[-1][0] == self._eos:

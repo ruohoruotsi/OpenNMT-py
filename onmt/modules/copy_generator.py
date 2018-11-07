@@ -273,10 +273,10 @@ class CopyGeneratorLossCompute(loss.LossComputeBase):
             tagging_loss = torch.div(tagging_loss, Variable(batch.src[1].float())).sum()
         else:
             tagging_loss = tagging_loss.sum()
-        loss = tagging_loss + loss
 
         print("Tagging Loss {:.3f} Loss: {:.3f}".format(tagging_loss.data[0], loss.data[0]))
         for s,t in zip(tag_labels[:10], tags[:10]):
             print("{} {:.2f}".format(s.data[0],t.exp().data[1]))
 
+        loss = tagging_loss + loss
         return loss, stats
