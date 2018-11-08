@@ -289,7 +289,7 @@ class TextDataset(DatasetBase):
             use_vocab=False, dtype=torch.long,
             sequential=False)
 
-        def make_tag(data, vocab, is_train):
+        def make_tag(data, vocab):
             src_size = max([t.size(0) for t in data])
             alignment = torch.zeros(src_size, len(data))
             for i, sent in enumerate(data):
@@ -299,7 +299,7 @@ class TextDataset(DatasetBase):
         fields["tag"] = torchtext.data.Field(
             postprocessing=make_tag,
             use_vocab=False,
-            dtype=torch.FloatTensor,
+            dtype=torch.float,
             sequential=False)
 
         return fields

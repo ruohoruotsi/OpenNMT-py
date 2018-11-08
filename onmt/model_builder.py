@@ -20,7 +20,7 @@ from onmt.decoders.decoder import InputFeedRNNDecoder, StdRNNDecoder
 from onmt.decoders.transformer import TransformerDecoder
 from onmt.decoders.cnn_decoder import CNNDecoder
 
-from onmt.modules import Embeddings, CopyGenerator
+from onmt.modules import Embeddings, CopyGenerator, Tagger
 from onmt.utils.misc import use_gpu
 from onmt.utils.logging import logger
 
@@ -220,7 +220,7 @@ def build_base_model(model_opt, fields, gpu, checkpoint=None):
     # Build NMTModel(= encoder + decoder + tagger).
     device = torch.device("cuda" if gpu else "cpu")
 
-    model = NMTModel(encoder, decoder, tagger)
+    model = onmt.models.NMTModel(encoder, decoder, tagger)
     model.model_type = model_opt.model_type
 
     # Build Generator.
