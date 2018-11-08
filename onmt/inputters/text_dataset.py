@@ -299,7 +299,7 @@ class TextDataset(DatasetBase):
         fields["tag"] = torchtext.data.Field(
             postprocessing=make_tag,
             use_vocab=False,
-            tensor_type=torch.FloatTensor,
+            dtype=torch.FloatTensor,
             sequential=False)
 
         return fields
