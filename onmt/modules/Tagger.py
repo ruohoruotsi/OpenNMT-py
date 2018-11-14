@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 """
 Tagger file
@@ -19,8 +18,8 @@ class Tagger(nn.Module):
         # final_layer, _ = self.rnn(memory_bank, None)
         # t_copy = F.sigmoid(self.linear(memory_bank))
         t_copy = self.linear(memory_bank)
-        t_copy = self.linear2(F.tanh(t_copy))
-        t_copy = F.log_softmax(t_copy, dim=-1)
+        t_copy = self.linear2(torch.tanh(t_copy))
+        t_copy = torch.log_softmax(t_copy, dim=-1)
         # print("WEIGHT", self.linear.weight)
         # memory_bank.detach_()
         # t_copy = self.linear(memory_bank)
