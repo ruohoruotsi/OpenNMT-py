@@ -174,20 +174,18 @@ class CopyGeneratorLossCompute(loss.LossComputeBase):
                                                 self.padding_idx)
         self.tag_criterion = CopyTagCriterion(self.padding_idx)
 
-    def _make_shard_state(self, batch, output, tags, range_, attns, tag_labels, align):
+    def _make_shard_state(self, batch, output, tags, range_, attns):
         """ See base class for args description. """
         if getattr(batch, "alignment", None) is None:
             raise AssertionError("using -copy_attn you need to pass in "
                                  "-dynamic_dict during preprocess stage.")
-
         return {
             "output": output,
             "target": batch.tgt[range_[0] + 1: range_[1]],
             "copy_attn": attns.get("copy"),
             "align": batch.alignment[range_[0] + 1: range_[1]],
             "tags": tags,
-            "tag_labels": tag_labels,
-            "copy_align": align
+            "tag_labels": batch.tag[range_[0] + 1: range_[1]]
         }
 
     def _compute_loss(self, batch, output, target, copy_attn, align, tag_labels, tags, copy_align):

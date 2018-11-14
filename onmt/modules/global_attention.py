@@ -87,7 +87,6 @@ class GlobalAttention(nn.Module):
             self.v = nn.Linear(dim, 1, bias=False)
         # mlp wants it with bias
         out_bias = self.attn_type == "mlp"
-
         self.linear_out = nn.Linear(dim * 2, dim, bias=out_bias)
 
         if coverage:
@@ -225,4 +224,4 @@ class GlobalAttention(nn.Module):
             aeq(batch, batch_)
             aeq(source_l, source_l_)
 
-        return attn_h, align_vectors, align.view(batch*targetL, sourceL)
+        return attn_h, align_vectors
