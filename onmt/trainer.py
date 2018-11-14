@@ -281,7 +281,6 @@ class Trainer(object):
                 # 2. F-prop all but generator.
                 if self.grad_accum_count == 1:
                     self.model.zero_grad()
-                print(self.model)
                 outputs, attns, tags = \
                     self.model(src, tgt, src_lengths)
 

@@ -10,7 +10,12 @@ def model_opts(parser):
     These options are passed to the construction of the model.
     Be careful with these as they will be used during translation.
     """
-
+    # Content Selector Options
+    group = parser.add_argument_group('Content-Selector')
+    group.add_argument('-content_gumble_tags', action='store_true',
+                       help="""Use gumble softmax for content selection.""")
+    group.add_argument('-content_temperature', type=float, default=1.,
+                       help='Temperature for content selection.')
     # Embedding Options
     group = parser.add_argument_group('Model-Embeddings')
     group.add_argument('-src_word_vec_size', type=int, default=500,

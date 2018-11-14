@@ -237,7 +237,9 @@ def build_base_model(model_opt, fields, gpu, checkpoint=None):
             generator[0].weight = decoder.embeddings.word_lut.weight
     else:
         generator = CopyGenerator(model_opt.dec_rnn_size,
-                                  fields["tgt"].vocab)
+                                  fields["tgt"].vocab,
+                                  normalizing_temp=model_opt.content_temperature,
+                                  gumbel_tags=model_opt.content_gumble_tags)
 
     # Load the model states from checkpoint or initialize them.
     if checkpoint is not None:

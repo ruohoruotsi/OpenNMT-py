@@ -143,7 +143,7 @@ class LossComputeBase(nn.Module):
         shard_state = self._make_shard_state(batch, output, tags, range_, attns)
         for shard in shards(shard_state, shard_size):
             loss, stats = self._compute_loss(batch, **shard)
-            loss.div(normalization).backward()
+            loss.div(float(normalization)).backward()
             batch_stats.update(stats)
         return batch_stats
 
@@ -225,7 +225,7 @@ class NMTLossCompute(LossComputeBase):
                 ignore_index=self.padding_idx, reduction='sum'
             )
 
-    def _make_shard_state(self, batch, output, range_, attns=None):
+    def _make_shard_state(self, batch, output, tags, range_, attns=None):
         return {
             "output": output,
             "target": batch.tgt[range_[0] + 1: range_[1]],
