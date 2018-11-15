@@ -14,17 +14,7 @@ class Tagger(nn.Module):
 
     def forward(self, memory_bank):
         src_len, bsize, rnn_size = memory_bank.size()
-
-        # final_layer, _ = self.rnn(memory_bank, None)
-        # t_copy = F.sigmoid(self.linear(memory_bank))
-        t_copy = self.linear(memory_bank)
-        t_copy = self.linear2(torch.tanh(t_copy))
-        # t_copy = torch.log_softmax(t_copy, dim=-1)
-        # print("WEIGHT", self.linear.weight)
-        # memory_bank.detach_()
         # t_copy = self.linear(memory_bank)
-        # t_copy = F.sigmoid(t_copy)
-        # print(t_copy[:, 0][:10])
-        # final_layer = F.tanh(self.linear1(memory_bank))
-        # t_copy = F.sigmoid(self.linear(final_layer))
+        # t_copy = self.linear2(torch.tanh(t_copy))
+        t_copy = self.linear2(memory_bank)
         return t_copy

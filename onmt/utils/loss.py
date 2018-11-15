@@ -311,7 +311,11 @@ def shards(state, shard_size, eval_only=False):
             if isinstance(v, torch.Tensor) and state[k].requires_grad:
                 variables.extend(zip(torch.split(state[k], shard_size),
                                      [v_chunk.grad for v_chunk in v_split]))
+        # for v in variables:
+        #     print(v[0].shape)
+        #     print(v[1])
         inputs, grads = zip(*variables)
         # print(inputs, grads)
         # print("grads", [g[:3] for g in grads])
+
         torch.autograd.backward(inputs, grads)

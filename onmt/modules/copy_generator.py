@@ -2,6 +2,7 @@
 import torch.nn as nn
 import torch
 import torch.cuda
+import numpy as np
 
 from torch.nn.modules.loss import BCELoss, BCEWithLogitsLoss
 import torch.nn.functional as F
@@ -70,6 +71,7 @@ class CopyGenerator(nn.Module):
         self.sigmoid = nn.Sigmoid()
         self.normalizing_temp = normalizing_temp
         self.gumbel_tags = gumbel_tags
+        self.annealing_steps = 0
 
     def forward(self, hidden, attn, tags, src_map):
         """
@@ -102,35 +104,20 @@ class CopyGenerator(nn.Module):
         # Probibility of not copying: p_{word}(w) * (1 - p(z))
         out_prob = torch.mul(prob, 1 - p_copy.expand_as(prob))
 
-        # GUMBEL SOFTMAX
+        # GUMBEL SOFTMAX PREDICTED MASK
         tag_out = self._gumbel_sample(tags)
         # formatting
         tag_out = tag_out.transpose(0,1)\
                          .unsqueeze(0)\
                          .expand(batch_by_tlen, batch, slen)\
                          .view(-1, slen)
-        print(tag_out[0][:10])
-        print(attn[0][:10])
+        # MASK THE ATTENTION
         mul_attn = torch.mul(tag_out, attn)
-        print(mul_attn[0][:10])
-        mul_attn = F.softmax(mul_attn, 1)
-        # print(tag_out[:5], attn[:5])
-        print(mul_attn[0][:10])
+        # RENORMALIZE AND ADD TEMPERATURE
+        mul_attn = F.softmax(mul_attn/0.7, -1)
 
 
-        '''
-        .contiguous()\
-                               .view(-1, copy_attn.shape[-1])\
-                               .unsqueeze(0)\
-                               .expand_as(copy_attn)\
-                               .contiguous()
-        '''
-
-        # need to apply batch_by_tlen times each
-        exit()
-
-        mul_attn = torch.mul(attn, p_copy.expand_as(attn))
-
+        mul_attn = torch.mul(mul_attn, p_copy.expand_as(attn))
         copy_prob = torch.bmm(mul_attn.view(-1, batch, slen)
                               .transpose(0, 1),
                               src_map.transpose(0, 1)).transpose(0, 1)
@@ -149,7 +136,15 @@ class CopyGenerator(nn.Module):
         # Apply temperature
         x = (flat_tags + U) / self.normalizing_temp
         x = F.softmax(x, dim=-1)
+        self._anneal_temperature()
         return x.view_as(tags)[:,:,1]
+
+    def _anneal_temperature(self):
+        self.annealing_steps += 1
+        if self.annealing_steps % 5 == 0:
+            self.normalizing_temp = max(0.4, np.exp(-1e-3*self.annealing_steps))
+            print("annealing temperature to {:2f}".format(self.normalizing_temp))
+
 
 class CopyGeneratorCriterion(object):
     """ Copy generator criterion """
@@ -193,14 +188,14 @@ class CopyTagCriterion(object):
     def __init__(self, pad, eps=1e-10):
         self.eps = eps
         self.pad = pad
+        self.crit = torch.nn.CrossEntropyLoss()
 
     def __call__(self, yhat, y, src_lengths):
-        # Probability of the correct class
-        out = yhat.gather(1, y.view(-1, 1))
-        # Mask out padding
-        mask = sequence_mask(src_lengths).view(-1).unsqueeze(1)
-        out.data.masked_fill_(1 - mask, 0)
-        return -out, mask
+        # print(yhat.shape, y.shape)
+        loss = self.crit(yhat, y)
+        for s,t in zip(y[:15], F.softmax(yhat[:15])):
+            print("{} {:.2f}".format(s.item(),t[1].item()))
+        return loss
 
 
 class CopyGeneratorLossCompute(loss.LossComputeBase):
@@ -236,7 +231,7 @@ class CopyGeneratorLossCompute(loss.LossComputeBase):
             "copy_attn": attns.get("copy"),
             "align": batch.alignment[range_[0] + 1: range_[1]],
             "tags": tags,
-            "tag_labels": batch.tag[range_[0] + 1: range_[1]]
+            "tag_labels": batch.tag#[range_[0] + 1: range_[1]]
         }
 
     def _compute_loss(self, batch, output, target, copy_attn, align, tags, tag_labels):
@@ -256,27 +251,19 @@ class CopyGeneratorLossCompute(loss.LossComputeBase):
         tag_labels = tag_labels[:src_len]
 
         # Use supervision on the mask prediction
-        supervise_tags = False
+        self.supervise_tags = True
         tagging_loss = 0
-        print("copy", copy_attn.shape)
-        print("tag", tags.shape)
         if self.supervise_tags:
-            # To Do: new format
-            log_tags = tags[:,:,1].contiguous()\
-                               .view(-1, copy_attn.shape[-1])\
-                               .unsqueeze(0)\
-                               .expand_as(copy_attn)\
-                               .contiguous()
-            # copy_mask_pred = F.softmax(log_tags, dim=-1)
             # Compute Tag Loss Term
-            tags = tags.view(-1, 2)
-            tag_labels = tag_labels.view(-1).long()
-            tagging_loss, mask = self.tag_criterion(tags, tag_labels, batch.src[1])
-            if self.normalize_by_length:
-                tagging_loss = tagging_loss.view(-1, batch.batch_size).sum(0)
-                tagging_loss = torch.div(tagging_loss, Variable(batch.src[1].float())).sum()
-            else:
-                tagging_loss = tagging_loss.sum()
+            tagging_loss = self.tag_criterion(
+                tags.view(-1, 2)[:150],
+                tag_labels.view(-1).long()[:150],
+                batch.src[1])
+            # if self.normalize_by_length:
+            #     tagging_loss = tagging_loss.view(-1, batch.batch_size).sum(0)
+            #     tagging_loss = torch.div(tagging_loss, batch.src[1].float()).sum()
+            # else:
+            #     tagging_loss = tagging_loss.sum()
 
         target = target.view(-1)
         align = align.view(-1)
@@ -317,12 +304,7 @@ class CopyGeneratorLossCompute(loss.LossComputeBase):
 
         if self.supervise_tags:
             print("Tagging Loss {:.3f} Loss: {:.3f}".format(tagging_loss.data[0], loss.data[0]))
-
+            loss = 1e-1*loss + tagging_loss
         else:
             print("No Activated Tagging Loss, Loss: {:.3f}".format(loss.data[0]))
-
-        for s,t in zip(tag_labels[:10], tags[:10]):
-            print("{} {:.2f}".format(s.item(),t[0][1].item()))
-
-        loss = tagging_loss + loss
         return loss, stats
