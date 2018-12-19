@@ -316,5 +316,5 @@ class CopyGeneratorLossCompute(loss.LossComputeBase):
             for tag in gumbel_tags.view(-1, 2)[:15, 1]:
                 print("{:.3f}".format(tag.item()))
 
-            loss = loss + tagging_penalty * 0.001
+            loss = loss + tagging_penalty * 0.003
         return loss, stats
