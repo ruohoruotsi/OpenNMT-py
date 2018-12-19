@@ -4,12 +4,12 @@ import torch
 import torch.cuda
 import numpy as np
 
-from torch.nn.modules.loss import BCELoss, BCEWithLogitsLoss
 import torch.nn.functional as F
 
 import onmt.inputters as inputters
 from onmt.utils.misc import aeq
 from onmt.utils import loss
+
 
 class CopyGenerator(nn.Module):
     """Generator module that additionally considers copying
@@ -105,24 +105,23 @@ class CopyGenerator(nn.Module):
         out_prob = torch.mul(prob, 1 - p_copy.expand_as(prob))
 
         # GUMBEL SOFTMAX PREDICTED MASK
-        tag_out = self._gumbel_sample(tags)
+        tag_out_pre = self._gumbel_sample(tags)
         # formatting
-        tag_out = tag_out.transpose(0,1)\
-                         .unsqueeze(0)\
-                         .expand(batch_by_tlen, batch, slen)\
-                         .view(-1, slen)
+        tag_out = tag_out_pre.transpose(0, 1)\
+                             .unsqueeze(0)\
+                             .expand(batch_by_tlen, batch, slen)\
+                             .view(-1, slen)
         # MASK THE ATTENTION
         mul_attn = torch.mul(tag_out, attn)
         # RENORMALIZE AND ADD TEMPERATURE
         mul_attn = F.softmax(mul_attn/0.7, -1)
-
 
         mul_attn = torch.mul(mul_attn, p_copy.expand_as(attn))
         copy_prob = torch.bmm(mul_attn.view(-1, batch, slen)
                               .transpose(0, 1),
                               src_map.transpose(0, 1)).transpose(0, 1)
         copy_prob = copy_prob.contiguous().view(-1, cvocab)
-        return torch.cat([out_prob, copy_prob], 1)
+        return torch.cat([out_prob, copy_prob], 1), tag_out_pre
 
     def _gumbel_sample(self, tags):
         src_len, bsize, tsize = tags.shape
@@ -193,8 +192,8 @@ class CopyTagCriterion(object):
     def __call__(self, yhat, y, src_lengths):
         # print(yhat.shape, y.shape)
         loss = self.crit(yhat, y)
-        for s,t in zip(y[:15], F.softmax(yhat[:15])):
-            print("{} {:.2f}".format(s.item(),t[1].item()))
+        for s, t in zip(y[:15], F.softmax(yhat[:15])):
+            print("{} {:.2f}".format(s.item(), t[1].item()))
         return loss
 
 
@@ -251,7 +250,7 @@ class CopyGeneratorLossCompute(loss.LossComputeBase):
         tag_labels = tag_labels[:src_len]
 
         # Use supervision on the mask prediction
-        self.supervise_tags = True
+        self.supervise_tags = False
         tagging_loss = 0
         if self.supervise_tags:
             # Compute Tag Loss Term
@@ -267,10 +266,15 @@ class CopyGeneratorLossCompute(loss.LossComputeBase):
 
         target = target.view(-1)
         align = align.view(-1)
-        scores = self.generator(self._bottle(output),
-                                self._bottle(copy_attn),
-                                tags,
-                                batch.src_map)
+        scores, gumbel_tags = self.generator(
+            self._bottle(output),
+            self._bottle(copy_attn),
+            tags,
+            batch.src_map)
+
+        # penalize selection
+        tagging_penalty = gumbel_tags.view(-1, 2)[:, 1].sum()
+
         loss = self.criterion(scores, align, target)
         scores_data = scores.data.clone()
         scores_data = inputters.TextDataset.collapse_copy_scores(
@@ -303,8 +307,14 @@ class CopyGeneratorLossCompute(loss.LossComputeBase):
             loss = loss.sum()
 
         if self.supervise_tags:
-            print("Tagging Loss {:.3f} Loss: {:.3f}".format(tagging_loss.data[0], loss.data[0]))
+            print("Tagging Loss {:.3f} Loss: {:.3f}".format(
+                tagging_loss.data.item(), loss.data.item()))
             loss = 1e-1*loss + tagging_loss
         else:
-            print("No Activated Tagging Loss, Loss: {:.3f}".format(loss.data[0]))
+            print("No Activated Tagging Loss, Loss: {:.3f}, Penalty: {:.3f}".format(
+                loss.data.item(), tagging_penalty.item()))
+            for tag in gumbel_tags.view(-1, 2)[:15, 1]:
+                print("{:.3f}".format(tag.item()))
+
+            loss = loss + tagging_penalty * 0.001
         return loss, stats
