@@ -31,10 +31,10 @@ def build_trainer(opt, device_id, model, fields,
         model_saver(:obj:`onmt.models.ModelSaverBase`): the utility object
             used to save the model
     """
-    train_loss = onmt.utils.loss.build_loss_compute(
-        model, fields["tgt"], opt)
+    tgt_field = fields['tgt'][0][1]
+    train_loss = onmt.utils.loss.build_loss_compute(model, tgt_field, opt)
     valid_loss = onmt.utils.loss.build_loss_compute(
-        model, fields["tgt"], opt, train=False)
+        model, tgt_field, opt, train=False)
 
     trunc_size = opt.truncated_decoder  # Badly named...
     shard_size = opt.max_generator_batches
@@ -131,7 +131,7 @@ class Trainer(object):
         """
         logger.info('Start training...')
 
-        step = self.optim._step + 1
+        step = self.optim.training_step
         true_batchs = []
         accum = 0
         normalization = 0
@@ -176,7 +176,7 @@ class Trainer(object):
 
                         report_stats = self._maybe_report_training(
                             step, train_steps,
-                            self.optim.learning_rate,
+                            self.optim.learning_rate(),
                             report_stats)
 
                         true_batchs = []
@@ -194,7 +194,7 @@ class Trainer(object):
                             if self.gpu_verbose_level > 0:
                                 logger.info('GpuRank %d: report stat step %d'
                                             % (self.gpu_rank, step))
-                            self._report_step(self.optim.learning_rate,
+                            self._report_step(self.optim.learning_rate(),
                                               step, valid_stats=valid_stats)
 
                         if self.gpu_rank == 0:
@@ -259,7 +259,7 @@ class Trainer(object):
             else:
                 trunc_size = target_size
 
-            # dec_state = None
+            bptt = False
             src = inputters.make_features(batch, 'src', self.data_type)
             if self.data_type == 'text':
                 _, src_lengths = batch.src
@@ -279,7 +279,8 @@ class Trainer(object):
                 if self.grad_accum_count == 1:
                     self.model.zero_grad()
                 outputs, attns = \
-                    self.model(src, tgt, src_lengths)
+                    self.model(src, tgt, src_lengths, bptt=bptt)
+                bptt = True
 
                 # 3. Compute loss in shards for memory efficiency.
                 batch_stats = self.train_loss.sharded_compute_loss(

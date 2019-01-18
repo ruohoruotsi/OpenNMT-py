@@ -230,12 +230,12 @@ def preprocess_opts(parser):
     group.add('--src_seq_length', '-src_seq_length', type=int, default=50,
               help="Maximum source sequence length")
     group.add('--src_seq_length_trunc', '-src_seq_length_trunc',
-              type=int, default=0,
+              type=int, default=None,
               help="Truncate source sequence length.")
     group.add('--tgt_seq_length', '-tgt_seq_length', type=int, default=50,
               help="Maximum target sequence length to keep.")
     group.add('--tgt_seq_length_trunc', '-tgt_seq_length_trunc',
-              type=int, default=0,
+              type=int, default=None,
               help="Truncate target sequence length.")
     group.add('--lower', '-lower', action='store_true', help='lowercase data')
     group.add('--filter_valid', '-filter_valid', action='store_true',
@@ -442,7 +442,8 @@ def train_opts(parser):
               help="""Decay every decay_steps""")
 
     group.add('--decay_method', '-decay_method', type=str, default="none",
-              choices=['noam', 'none'], help="Use a custom decay rate.")
+              choices=['noam', 'rsqrt', 'none'],
+              help="Use a custom decay rate.")
     group.add('--warmup_steps', '-warmup_steps', type=int, default=4000,
               help="""Number of warmup steps for custom decay.""")
 
@@ -463,8 +464,8 @@ def train_opts(parser):
     group.add('--tensorboard', '-tensorboard', action="store_true",
               help="""Use tensorboardX for visualization during training.
                        Must have the library tensorboardX.""")
-    group.add_argument("-tensorboard_log_dir", type=str,
-                       default="runs/onmt",
+    group.add_argument("--tensorboard_log_dir", "-tensorboard_log_dir",
+                       type=str, default="runs/onmt",
                        help="""Log directory for Tensorboard.
                        This is also the name of the run.
                        """)
@@ -538,6 +539,8 @@ def translate_opts(parser):
               default=1., type=float,
               help="""If doing random sampling, divide the logits by
                        this before computing softmax during decoding.""")
+    group.add('--seed', '-seed', type=int, default=829,
+              help="Random seed")
 
     group = parser.add_argument_group('Beam')
     group.add('--fast', '-fast', action="store_true",
