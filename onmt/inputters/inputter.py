@@ -2,6 +2,7 @@
 import glob
 import os
 import codecs
+import math
 
 from collections import Counter, defaultdict
 from itertools import chain, cycle
@@ -12,7 +13,8 @@ import torchtext.data
 from torchtext.data import Field
 from torchtext.vocab import Vocab
 
-from onmt.inputters.text_dataset import TextDataset, text_fields
+from onmt.inputters.text_dataset import TextDataset, text_fields,\
+    TextMultiField
 from onmt.inputters.image_dataset import ImageDataset, image_fields
 from onmt.inputters.audio_dataset import AudioDataset, audio_fields
 from onmt.utils.logging import logger
@@ -126,6 +128,15 @@ def load_old_vocab(vocab, data_type="text", dynamic_dict=False):
     returns: a dictionary whose keys are the field names and whose values
              are lists of (name, Field) pairs
     """
+    if _old_style_field_list(vocab):  # upgrade to multifield
+        fields = vocab
+        for base_name, vals in fields.items():
+            if ((base_name == 'src' and data_type == 'text') or
+                    base_name == 'tgt'):
+                assert not isinstance(vals[0][1], TextMultiField)
+                fields[base_name] = [(base_name, TextMultiField(
+                    vals[0][0], vals[0][1], vals[1:]))]
+        return fields
     vocab = dict(vocab)
     n_src_features = sum('src_feat_' in k for k in vocab)
     n_tgt_features = sum('tgt_feat_' in k for k in vocab)
@@ -134,12 +145,17 @@ def load_old_vocab(vocab, data_type="text", dynamic_dict=False):
     )
     for k, vals in fields.items():
         for n, f in vals:
-            if n in vocab:
-                f.vocab = vocab[n]
+            try:
+                f_iter = iter(f)
+            except TypeError:
+                f_iter = [(n, f)]
+            for sub_n, sub_f in f_iter:
+                if sub_n in vocab:
+                    sub_f.vocab = vocab[sub_n]
     return fields
 
 
-def old_style_vocab(vocab):
+def _old_style_vocab(vocab):
     """
     vocab: some object loaded from a *.vocab.pt file
     returns: whether the object is a list of pairs where the second object
@@ -153,29 +169,14 @@ def old_style_vocab(vocab):
         any(isinstance(v[1], Vocab) for v in vocab)
 
 
-def make_features(batch, side):
-    """
-    batch: a batch object
-    side: 'src' or 'tgt'
-    returns the tensor with features concatenated, and the lengths (if present)
-        or None.
-    """
-    assert side in ['src', 'tgt']
-    if isinstance(batch.__dict__[side], tuple):
-        data, lengths = batch.__dict__[side]
-    else:
-        data = batch.__dict__[side]
-        lengths = None
+def _old_style_field_list(vocab):
+    # if tgt isn't using TextMultiField, then no text field is.
+    return not _old_style_vocab(vocab) and not isinstance(
+        vocab['tgt'][0][1], TextMultiField)
 
-    if batch.src_is_text or side == 'tgt':  # this is temporary, see #1196
-        # cat together layers, producing a 3d output tensor for src text
-        # and for tgt (which is assumed to be text)
-        feat_start = side + "_feat_"
-        feat_names = sorted(k for k in batch.__dict__ if feat_start in k)
-        levels = [data] + [batch.__dict__[k] for k in feat_names]
-        data = torch.cat([level.unsqueeze(2) for level in levels], 2)
 
-    return data, lengths
+def old_style_vocab(vocab):
+    return _old_style_vocab(vocab) or _old_style_field_list(vocab)
 
 
 def filter_example(ex, use_src_len=True, use_tgt_len=True,
@@ -187,8 +188,10 @@ def filter_example(ex, use_src_len=True, use_tgt_len=True,
     argument to a dataset, it should be partially evaluated with everything
     specified except the value of the example.
     """
-    return (not use_src_len or min_src_len <= len(ex.src) <= max_src_len) and \
-        (not use_tgt_len or min_tgt_len <= len(ex.tgt) <= max_tgt_len)
+    src_len = len(ex.src[0])
+    tgt_len = len(ex.tgt[0])
+    return (not use_src_len or min_src_len <= src_len <= max_src_len) and \
+        (not use_tgt_len or min_tgt_len <= tgt_len <= max_tgt_len)
 
 
 def build_dataset(fields, data_type, src,
@@ -241,18 +244,55 @@ def build_dataset(fields, data_type, src,
     return dataset
 
 
-def _build_field_vocab(field, counter, **kwargs):
+def _pad_vocab_to_multiple(vocab, multiple):
+    vocab_size = len(vocab)
+    if vocab_size % multiple == 0:
+        return
+    target_size = int(math.ceil(vocab_size / multiple)) * multiple
+    padding_tokens = [
+        "averyunlikelytoken%d" % i for i in range(target_size - vocab_size)]
+    vocab.extend(Vocab(Counter(), specials=padding_tokens))
+    return vocab
+
+
+def _build_field_vocab(field, counter, size_multiple=1, **kwargs):
     # this is basically copy-pasted from torchtext.
     all_specials = [
         field.unk_token, field.pad_token, field.init_token, field.eos_token
     ]
     specials = [tok for tok in all_specials if tok is not None]
     field.vocab = field.vocab_cls(counter, specials=specials, **kwargs)
+    if size_multiple > 1:
+        _pad_vocab_to_multiple(field.vocab, size_multiple)
+
+
+def _load_vocab(vocab_path, name, counters):
+    # counters changes in place
+    vocab = _read_vocab_file(vocab_path, name)
+    vocab_size = len(vocab)
+    logger.info('Loaded %s vocab has %d tokens.' % (name, vocab_size))
+    for i, token in enumerate(vocab):
+        # keep the order of tokens specified in the vocab file by
+        # adding them to the counter with decreasing counting values
+        counters[name][token] = vocab_size - i
+    return vocab, vocab_size
+
+
+def _build_fv_from_multifield(multifield, counters, build_fv_args,
+                              size_multiple=1):
+    for name, field in multifield:
+        _build_field_vocab(
+            field,
+            counters[name],
+            size_multiple=size_multiple,
+            **build_fv_args[name])
+        logger.info(" * %s vocab size: %d." % (name, len(field.vocab)))
 
 
 def build_vocab(train_dataset_files, fields, data_type, share_vocab,
                 src_vocab_path, src_vocab_size, src_words_min_frequency,
-                tgt_vocab_path, tgt_vocab_size, tgt_words_min_frequency):
+                tgt_vocab_path, tgt_vocab_size, tgt_words_min_frequency,
+                vocab_size_multiple=1):
     """
     Args:
         train_dataset_files: a list of train dataset pt file.
@@ -267,30 +307,24 @@ def build_vocab(train_dataset_files, fields, data_type, share_vocab,
         tgt_vocab_size(int): size of the target vocabulary.
         tgt_words_min_frequency(int): the minimum frequency needed to
                 include a target word in the vocabulary.
+        vocab_size_multiple(int): ensure that the vocabulary size is a multiple
+                of this value.
 
     Returns:
         Dict of Fields
     """
-    counters = {k: Counter() for k, v in chain.from_iterable(fields.values())}
+    counters = defaultdict(Counter)
 
     # Load vocabulary
     if src_vocab_path:
-        src_vocab = _read_vocab_file(src_vocab_path, "src")
-        src_vocab_size = len(src_vocab)
-        logger.info('Loaded source vocab has %d tokens.' % src_vocab_size)
-        for i, token in enumerate(src_vocab):
-            # keep the order of tokens specified in the vocab file by
-            # adding them to the counter with decreasing counting values
-            counters['src'][token] = src_vocab_size - i
+        src_vocab, src_vocab_size = _load_vocab(
+            src_vocab_path, "src", counters)
     else:
         src_vocab = None
 
     if tgt_vocab_path:
-        tgt_vocab = _read_vocab_file(tgt_vocab_path, "tgt")
-        tgt_vocab_size = len(tgt_vocab)
-        logger.info('Loaded source vocab has %d tokens.' % tgt_vocab_size)
-        for i, token in enumerate(tgt_vocab):
-            counters['tgt'][token] = tgt_vocab_size - i
+        tgt_vocab, tgt_vocab_size = _load_vocab(
+            tgt_vocab_path, "tgt", counters)
     else:
         tgt_vocab = None
 
@@ -299,11 +333,20 @@ def build_vocab(train_dataset_files, fields, data_type, share_vocab,
         logger.info(" * reloading %s." % path)
         for ex in dataset.examples:
             for name, field in chain.from_iterable(fields.values()):
-                has_vocab = (name == 'src' and src_vocab) or \
-                    (name == 'tgt' and tgt_vocab)
-                if field.sequential and not has_vocab:
-                    val = getattr(ex, name, None)
-                    counters[name].update(val)
+                try:
+                    f_iter = iter(field)
+                except TypeError:
+                    f_iter = [(name, field)]
+                    all_data = [getattr(ex, name, None)]
+                else:
+                    all_data = getattr(ex, name)
+                for (sub_n, sub_f), fd in zip(
+                        f_iter, all_data):
+                    has_vocab = (sub_n == 'src' and src_vocab) or \
+                                (sub_n == 'tgt' and tgt_vocab)
+                    if sub_f.sequential and not has_vocab:
+                        val = fd
+                        counters[sub_n].update(val)
 
         # Drop the none-using from memory but keep the last
         if i < len(train_dataset_files) - 1:
@@ -314,27 +357,41 @@ def build_vocab(train_dataset_files, fields, data_type, share_vocab,
             del dataset
             gc.collect()
 
-    for name, field in fields["tgt"]:
-        _build_field_vocab(field, counters[name])
-        logger.info(" * %s vocab size: %d." % (name, len(field.vocab)))
+    build_fv_args = defaultdict(dict)
+    build_fv_args["src"] = dict(
+        max_size=src_vocab_size, min_freq=src_words_min_frequency)
+    build_fv_args["tgt"] = dict(
+        max_size=tgt_vocab_size, min_freq=tgt_words_min_frequency)
+    assert len(fields["tgt"]) == 1
+    tgt_multifield = fields["tgt"][0][1]
+    _build_fv_from_multifield(
+        tgt_multifield,
+        counters,
+        build_fv_args,
+        size_multiple=vocab_size_multiple if not share_vocab else 1)
     if data_type == 'text':
-        for name, field in fields["src"]:
-            _build_field_vocab(field, counters[name])
-            logger.info(" * %s vocab size: %d." % (name, len(field.vocab)))
+        assert len(fields["src"]) == 1
+        src_multifield = fields["src"][0][1]
+        _build_fv_from_multifield(
+            src_multifield,
+            counters,
+            build_fv_args,
+            size_multiple=vocab_size_multiple if not share_vocab else 1)
         if share_vocab:
             # `tgt_vocab_size` is ignored when sharing vocabularies
             logger.info(" * merging src and tgt vocab...")
-            src_field = fields['src'][0][1]
-            tgt_field = fields['tgt'][0][1]
+            src_field = src_multifield.base_field
+            tgt_field = tgt_multifield.base_field
             _merge_field_vocabs(
                 src_field, tgt_field, vocab_size=src_vocab_size,
-                min_freq=src_words_min_frequency)
+                min_freq=src_words_min_frequency,
+                vocab_size_multiple=vocab_size_multiple)
             logger.info(" * merged vocab size: %d." % len(src_field.vocab))
-
     return fields  # is the return necessary?
 
 
-def _merge_field_vocabs(src_field, tgt_field, vocab_size, min_freq):
+def _merge_field_vocabs(src_field, tgt_field, vocab_size, min_freq,
+                        vocab_size_multiple):
     # in the long run, shouldn't it be possible to do this by calling
     # build_vocab with both the src and tgt data?
     specials = [tgt_field.unk_token, tgt_field.pad_token,
@@ -346,6 +403,8 @@ def _merge_field_vocabs(src_field, tgt_field, vocab_size, min_freq):
         merged, specials=specials,
         max_size=vocab_size, min_freq=min_freq
     )
+    if vocab_size_multiple > 1:
+        _pad_vocab_to_multiple(merged_vocab, vocab_size_multiple)
     src_field.vocab = merged_vocab
     tgt_field.vocab = merged_vocab
     assert len(src_field.vocab) == len(tgt_field.vocab)
@@ -387,12 +446,6 @@ class OrderedIterator(torchtext.data.Iterator):
             for b in torchtext.data.batch(self.data(), self.batch_size,
                                           self.batch_size_fn):
                 self.batches.append(sorted(b, key=self.sort_key))
-
-    def __iter__(self):
-        # temporary fix: See #1196
-        for batch in super(OrderedIterator, self).__iter__():
-            batch.src_is_text = isinstance(self.dataset, TextDataset)
-            yield batch
 
 
 class DatasetLazyIter(object):
@@ -452,10 +505,10 @@ def max_tok_len(new, count, sofar):
     if count == 1:
         max_src_in_batch = 0
         max_tgt_in_batch = 0
-    # Src: <bos> w1 ... wN <eos>
-    max_src_in_batch = max(max_src_in_batch, len(new.src) + 2)
-    # Tgt: w1 ... wN <eos>
-    max_tgt_in_batch = max(max_tgt_in_batch, len(new.tgt) + 1)
+    # Src: [<bos> w1 ... wN <eos>]
+    max_src_in_batch = max(max_src_in_batch, len(new.src[0]) + 2)
+    # Tgt: [w1 ... wN <eos>]
+    max_tgt_in_batch = max(max_tgt_in_batch, len(new.tgt[0]) + 1)
     src_elements = count * max_src_in_batch
     tgt_elements = count * max_tgt_in_batch
     return max(src_elements, tgt_elements)
