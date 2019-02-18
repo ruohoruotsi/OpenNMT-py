@@ -14,21 +14,22 @@ class TransformerDecoderLayer(nn.Module):
     """
     Args:
       d_model (int): the dimension of keys/values/queries in
-                       MultiHeadedAttention, also the input size of
-                       the first-layer of the PositionwiseFeedForward.
+          :class:`MultiHeadedAttention`, also the input size of
+          the first-layer of the :class:`PositionwiseFeedForward`.
       heads (int): the number of heads for MultiHeadedAttention.
-      d_ff (int): the second-layer of the PositionwiseFeedForward.
+      d_ff (int): the second-layer of the :class:`PositionwiseFeedForward`.
       dropout (float): dropout probability.
       self_attn_type (string): type of self-attention scaled-dot, average
     """
 
     def __init__(self, d_model, heads, d_ff, dropout,
-                 self_attn_type="scaled-dot"):
+                 self_attn_type="scaled-dot", max_relative_positions=0):
         super(TransformerDecoderLayer, self).__init__()
 
         if self_attn_type == "scaled-dot":
             self.self_attn = MultiHeadedAttention(
-                heads, d_model, dropout=dropout)
+                heads, d_model, dropout=dropout,
+                max_relative_positions=max_relative_positions)
         elif self_attn_type == "average":
             self.self_attn = AverageAttention(d_model, dropout=dropout)
 
@@ -43,16 +44,16 @@ class TransformerDecoderLayer(nn.Module):
                 layer_cache=None, step=None):
         """
         Args:
-            inputs (`FloatTensor`): `[batch_size x 1 x model_dim]`
-            memory_bank (`FloatTensor`): `[batch_size x src_len x model_dim]`
-            src_pad_mask (`LongTensor`): `[batch_size x 1 x src_len]`
-            tgt_pad_mask (`LongTensor`): `[batch_size x 1 x 1]`
+            inputs (FloatTensor): ``(batch_size, 1, model_dim)``
+            memory_bank (FloatTensor): ``(batch_size, src_len, model_dim)``
+            src_pad_mask (LongTensor): ``(batch_size, 1, src_len)``
+            tgt_pad_mask (LongTensor): ``(batch_size, 1, 1)``
 
         Returns:
-            (`FloatTensor`, `FloatTensor`):
+            (FloatTensor, FloatTensor):
 
-            * output `[batch_size x 1 x model_dim]`
-            * attn `[batch_size x 1 x src_len]`
+            * output ``(batch_size, 1, model_dim)``
+            * attn ``(batch_size, 1, src_len)``
 
         """
         dec_mask = None
@@ -89,9 +90,8 @@ class TransformerDecoderLayer(nn.Module):
 
 
 class TransformerDecoder(DecoderBase):
-    """
-    The Transformer decoder from "Attention is All You Need".
-
+    """The Transformer decoder from "Attention is All You Need".
+    :cite:`DBLP:journals/corr/VaswaniSPUJGKP17`
 
     .. mermaid::
 
@@ -112,14 +112,16 @@ class TransformerDecoder(DecoderBase):
        d_model (int): size of the model
        heads (int): number of heads
        d_ff (int): size of the inner FF layer
+       copy_attn (bool): if using a separate copy attention
+       self_attn_type (str): type of self-attention scaled-dot, average
        dropout (float): dropout parameters
-       embeddings (:obj:`onmt.modules.Embeddings`):
+       embeddings (onmt.modules.Embeddings):
           embeddings to use, should have positional encodings
-       attn_type (str): if using a seperate copy attention
     """
 
-    def __init__(self, num_layers, d_model, heads, d_ff, attn_type,
-                 copy_attn, self_attn_type, dropout, embeddings):
+    def __init__(self, num_layers, d_model, heads, d_ff,
+                 copy_attn, self_attn_type, dropout, embeddings,
+                 max_relative_positions):
         super(TransformerDecoder, self).__init__()
 
         self.embeddings = embeddings
@@ -129,7 +131,8 @@ class TransformerDecoder(DecoderBase):
 
         self.transformer_layers = nn.ModuleList(
             [TransformerDecoderLayer(d_model, heads, d_ff, dropout,
-             self_attn_type=self_attn_type)
+             self_attn_type=self_attn_type,
+             max_relative_positions=max_relative_positions)
              for i in range(num_layers)])
 
         # previously, there was a GlobalAttention module here for copy
@@ -140,19 +143,20 @@ class TransformerDecoder(DecoderBase):
 
     @classmethod
     def from_opt(cls, opt, embeddings):
+        """Alternate constructor."""
         return cls(
             opt.dec_layers,
             opt.dec_rnn_size,
             opt.heads,
             opt.transformer_ff,
-            opt.global_attention,
             opt.copy_attn,
             opt.self_attn_type,
             opt.dropout,
-            embeddings)
+            embeddings,
+            opt.max_relative_positions)
 
     def init_state(self, src, memory_bank, enc_hidden):
-        """ Init decoder state """
+        """Initialize decoder state."""
         self.state["src"] = src
         self.state["cache"] = None
 
@@ -173,6 +177,7 @@ class TransformerDecoder(DecoderBase):
         self.state["src"] = self.state["src"].detach()
 
     def forward(self, tgt, memory_bank, step=None, **kwargs):
+        """Decode, possibly stepwise."""
         if step == 0:
             self._init_cache(memory_bank)
 

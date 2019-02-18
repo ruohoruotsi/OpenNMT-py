@@ -1,4 +1,4 @@
-# Example: Summarization
+# Summarization
 
 Note: The process and results below are presented in our paper `Bottom-Up Abstractive Summarization`. Please consider citing it if you follow these instructions. 
 
@@ -139,7 +139,6 @@ python -u train.py -data data/cnndm/CNNDM \
                    -normalization tokens \
                    -max_generator_batches 2 \
                    -train_steps 200000 \
-                   -start_checkpoint_at 8 \
                    -accum_count 4 \
                    -share_embeddings \
                    -copy_attn \

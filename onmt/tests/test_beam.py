@@ -1,5 +1,5 @@
 import unittest
-from onmt.translate.beam import Beam
+from onmt.translate.beam import Beam, GNMTGlobalScorer
 
 import torch
 
@@ -134,11 +134,9 @@ class TestBeam(unittest.TestCase):
             [6., 5., 4., 3., 2., 1.]), dim=0)
         min_length = 5
         eos_idx = 2
-        # beam includes start token in cur_len count.
-        # Add one to its min_length to compensate
         beam = Beam(beam_sz, 0, 1, eos_idx, n_best=2,
                     exclusion_tokens=set(),
-                    min_length=min_length + 1,
+                    min_length=min_length,
                     global_scorer=GlobalScorerStub(),
                     block_ngram_repeat=0)
         for i in range(min_length + 4):
@@ -168,7 +166,7 @@ class TestBeam(unittest.TestCase):
             elif i == min_length:
                 # now the top beam has ended and no others have
                 # first beam finished had length beam.min_length
-                self.assertEqual(beam.finished[0][1], beam.min_length)
+                self.assertEqual(beam.finished[0][1], beam.min_length + 1)
                 # first beam finished was 0
                 self.assertEqual(beam.finished[0][2], 0)
             else:  # i > min_length
@@ -186,11 +184,9 @@ class TestBeam(unittest.TestCase):
             [6., 5., 4., 3., 2., 1.]), dim=0)
         min_length = 5
         eos_idx = 2
-        # beam includes start token in cur_len count.
-        # Add one to its min_length to compensate
         beam = Beam(beam_sz, 0, 1, eos_idx, n_best=2,
                     exclusion_tokens=set(),
-                    min_length=min_length + 1,
+                    min_length=min_length,
                     global_scorer=GlobalScorerStub(),
                     block_ngram_repeat=0)
         for i in range(min_length + 4):
@@ -226,12 +222,12 @@ class TestBeam(unittest.TestCase):
                 self.assertFalse(beam.done)
             elif i == min_length:
                 # beam 1 dies on min_length
-                self.assertEqual(beam.finished[0][1], beam.min_length)
+                self.assertEqual(beam.finished[0][1], beam.min_length + 1)
                 self.assertEqual(beam.finished[0][2], 1)
                 self.assertFalse(beam.done)
             else:  # i > min_length
                 # beam 0 dies on the step after beam 1 dies
-                self.assertEqual(beam.finished[1][1], beam.min_length + 1)
+                self.assertEqual(beam.finished[1][1], beam.min_length + 2)
                 self.assertEqual(beam.finished[1][2], 0)
                 self.assertTrue(beam.done)
 
@@ -242,20 +238,21 @@ class TestBeamAgainstReferenceCase(unittest.TestCase):
     N_WORDS = 8  # also don't change for same reason
     N_BEST = 3
     DEAD_SCORE = -1e20
+    INP_SEQ_LEN = 53
 
     def init_step(self, beam):
         # init_preds: [4, 3, 5, 6, 7] - no EOS's
         init_scores = torch.log_softmax(torch.tensor(
             [[0, 0, 0, 4, 5, 3, 2, 1]], dtype=torch.float), dim=1)
         expected_beam_scores, expected_preds_0 = init_scores.topk(self.BEAM_SZ)
-        beam.advance(init_scores, torch.randn(self.BEAM_SZ))
+        beam.advance(init_scores, torch.randn(self.BEAM_SZ, self.INP_SEQ_LEN))
         self.assertTrue(beam.scores.allclose(expected_beam_scores))
         self.assertTrue(beam.next_ys[-1].equal(expected_preds_0[0]))
         self.assertFalse(beam.eos_top)
         self.assertFalse(beam.done)
         return expected_beam_scores
 
-    def first_step(self, beam, expected_beam_scores):
+    def first_step(self, beam, expected_beam_scores, expected_len_pen):
         # no EOS's yet
         assert len(beam.finished) == 0
         scores_1 = torch.log_softmax(torch.tensor(
@@ -266,7 +263,7 @@ class TestBeamAgainstReferenceCase(unittest.TestCase):
              [0, 0, 0, .2, .2, .2, .2, .2]]
         ), dim=1)
 
-        beam.advance(scores_1, torch.randn(self.BEAM_SZ))
+        beam.advance(scores_1, torch.randn(self.BEAM_SZ, self.INP_SEQ_LEN))
 
         new_scores = scores_1 + expected_beam_scores.t()
         expected_beam_scores, unreduced_preds = new_scores.view(-1).topk(
@@ -282,12 +279,12 @@ class TestBeamAgainstReferenceCase(unittest.TestCase):
         self.assertEqual(beam.finished[0][2], 2)  # beam 2 finished
         self.assertEqual(beam.finished[0][1], 2)  # finished on second step
         self.assertEqual(beam.finished[0][0],  # finished with correct score
-                         expected_beam_scores[2])
+                         expected_beam_scores[2] / expected_len_pen)
         self.assertFalse(beam.eos_top)
         self.assertFalse(beam.done)
         return expected_beam_scores
 
-    def second_step(self, beam, expected_beam_scores):
+    def second_step(self, beam, expected_beam_scores, expected_len_pen):
         # assumes beam 2 finished on last step
         scores_2 = torch.log_softmax(torch.tensor(
             [[0, 0,  0, .3,   0, .51, .2, 0],
@@ -297,7 +294,7 @@ class TestBeamAgainstReferenceCase(unittest.TestCase):
              [0, 0, 0, .2, .2, .2, .2, .2]]
         ), dim=1)
 
-        beam.advance(scores_2, torch.randn(self.BEAM_SZ))
+        beam.advance(scores_2, torch.randn(self.BEAM_SZ, self.INP_SEQ_LEN))
 
         new_scores = scores_2 + expected_beam_scores.unsqueeze(1)
         new_scores[2] = self.DEAD_SCORE  # ended beam 2 shouldn't continue
@@ -317,12 +314,12 @@ class TestBeamAgainstReferenceCase(unittest.TestCase):
         self.assertEqual(expected_bptr_2[0], 3)
         self.assertEqual(beam.finished[1][1], 3)  # finished on third step
         self.assertEqual(beam.finished[1][0],  # finished with correct score
-                         expected_beam_scores[0])
+                         expected_beam_scores[0] / expected_len_pen)
         self.assertTrue(beam.eos_top)
         self.assertFalse(beam.done)
         return expected_beam_scores
 
-    def third_step(self, beam, expected_beam_scores):
+    def third_step(self, beam, expected_beam_scores, expected_len_pen):
         # assumes beam 0 finished on last step
         scores_3 = torch.log_softmax(torch.tensor(
             [[0, 0,  5000, 0,   5000, .51, .2, 0],  # beam 0 shouldn't cont
@@ -332,7 +329,7 @@ class TestBeamAgainstReferenceCase(unittest.TestCase):
              [0, 0, 50, 0, .2, .2, .2, .2]]  # beam 4 -> beam 1 should die
         ), dim=1)
 
-        beam.advance(scores_3, torch.randn(self.BEAM_SZ))
+        beam.advance(scores_3, torch.randn(self.BEAM_SZ, self.INP_SEQ_LEN))
 
         new_scores = scores_3 + expected_beam_scores.unsqueeze(1)
         new_scores[0] = self.DEAD_SCORE  # ended beam 2 shouldn't continue
@@ -351,7 +348,7 @@ class TestBeamAgainstReferenceCase(unittest.TestCase):
         self.assertEqual(expected_bptr_3[1], 4)
         self.assertEqual(beam.finished[2][1], 4)  # finished on fourth step
         self.assertEqual(beam.finished[2][0],  # finished with correct score
-                         expected_beam_scores[1])
+                         expected_beam_scores[1] / expected_len_pen)
         self.assertTrue(beam.eos_top)
         self.assertTrue(beam.done)
         return expected_beam_scores
@@ -364,6 +361,23 @@ class TestBeamAgainstReferenceCase(unittest.TestCase):
                     block_ngram_repeat=0)
 
         expected_beam_scores = self.init_step(beam)
-        expected_beam_scores = self.first_step(beam, expected_beam_scores)
-        expected_beam_scores = self.second_step(beam, expected_beam_scores)
-        self.third_step(beam, expected_beam_scores)
+        expected_beam_scores = self.first_step(beam, expected_beam_scores, 1)
+        expected_beam_scores = self.second_step(beam, expected_beam_scores, 1)
+        self.third_step(beam, expected_beam_scores, 1)
+
+
+class TestBeamWithLengthPenalty(TestBeamAgainstReferenceCase):
+    # this could be considered an integration test because it tests
+    # interactions between the GNMT scorer and the beam
+
+    def test_beam_advance_against_known_reference(self):
+        scorer = GNMTGlobalScorer(0.7, 0., "avg", "none")
+        beam = Beam(self.BEAM_SZ, 0, 1, self.EOS_IDX, n_best=self.N_BEST,
+                    exclusion_tokens=set(),
+                    min_length=0,
+                    global_scorer=scorer,
+                    block_ngram_repeat=0)
+        expected_beam_scores = self.init_step(beam)
+        expected_beam_scores = self.first_step(beam, expected_beam_scores, 3)
+        expected_beam_scores = self.second_step(beam, expected_beam_scores, 4)
+        self.third_step(beam, expected_beam_scores, 5)
