@@ -162,7 +162,7 @@ def model_opts(parser):
                    "https://arxiv.org/abs/1909.02074")
     group.add('--alignment_layer', '-alignment_layer', type=int, default=-3,
               help='Layer number which has to be supervised.')
-    group.add('--alignment_heads', '-alignment_heads', type=int, default=None,
+    group.add('--alignment_heads', '-alignment_heads', type=int, default=0,
               help='N. of cross attention heads per layer to supervised with')
     group.add('--full_context_alignment', '-full_context_alignment',
               action="store_true",
@@ -375,7 +375,7 @@ def train_opts(parser):
               help="IP of master for torch.distributed training.")
     group.add('--master_port', '-master_port', default=10000, type=int,
               help="Port of master for torch.distributed training.")
-    group.add('--queue_size', '-queue_size', default=400, type=int,
+    group.add('--queue_size', '-queue_size', default=40, type=int,
               help="Size of queue for each process in producer/consumer")
 
     group.add('--seed', '-seed', type=int, default=-1,
@@ -624,12 +624,6 @@ def translate_opts(parser):
                    "be the decoded sequence")
     group.add('--report_align', '-report_align', action='store_true',
               help="Report alignment for each translation.")
-    group.add('--report_bleu', '-report_bleu', action='store_true',
-              help="Report bleu score after translation, "
-                   "call tools/multi-bleu.perl on command line")
-    group.add('--report_rouge', '-report_rouge', action='store_true',
-              help="Report rouge 1/2/3/L/SU4 score after translation "
-                   "call tools/test_rouge.py on command line")
     group.add('--report_time', '-report_time', action='store_true',
               help="Report some translation time metrics")
 
